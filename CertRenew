@@ -1,0 +1,93 @@
+#!/bin/bash
+
+source  ~/.sapenv.sh
+
+#########################################################################################
+#  Variables                                                                            #
+#########################################################################################
+
+_dblist=${1:-"SYSTEMDB $(echo $SAPSYSTEMNAME)"}         # Parametro de entrada de los SID de los SAPs a renovar certificado
+_sidpro="P"                                             # Caracter que identifica a los entorno productivos en el ultimo caracter del SID
+_ymd=$(date +"%Y%m%d")                                  # Fecha actual en formato AAAAMMDD
+_bkpdir="/usr/sap/backup/data"                          # Directorio raiz donde se guardan los backups
+_sapdir="/usr/sap/$(echo $SAPSYSTEMNAME)"               # Directorio raiz de SAP
+_scriptdir="$(echo $_sapdir)/home/Scripts"              # Directorio raiz de los Scripts
+_logdir="$(echo $_scriptdir)/backup_log"                # Directorio de los logs del script de backup
+_logfile="$(echo $_logdir)/backup_$(echo $_ymd).log"    # Fichero de log del script, genera uno diario
+_sapexe="$(echo $_sapdir)/HDB$(echo $TINSTANCE)/exe"    # Directorio raiz de los ejecutables de HANADB
+_sapsql="$(echo $_hdbexe)/hdbsql"                       # Ruta del ejecutable hdbsql
+_sapuser="SAPSID"                                       # Usuario almacenado en la hdbuserstore para lanzar los backups
+
+#########################################################################################
+#  Funciones                                                                            #
+#########################################################################################
+
+function logSection() {
+  echo ""      >> $(echo $_logfile)
+  echo "#"     >> $(echo $_logfile)
+  echo "#  $1" >> $(echo $_logfile)
+  echo "#"     >> $(echo $_logfile)
+  echo ""      >> $(echo $_logfile)
+}
+
+function backup() {
+  local _db=$1
+  local _dbdir=${2:-"BACKINT"}
+  local _prefix="$(echo $_db)@$(echo $SAPSYSTEMNAME)_$(echo $_bkpprefix)_$(echo $_ymd)"
+  local _sql="BACKUP DATA FOR $(echo $_db) USING BACKINT ('$(echo $_prefix)')"
+
+  if [[ $_dbdir != "BACKINT" ]]
+  then
+    _sql="BACKUP DATA FOR $(echo $_db) USING FILE ('$(echo $_bkpdir)/$(echo $_dbdir)/$(echo $_prefix)')"
+  fi
+
+  logSection "Ejecutando siguiente backup: $(echo $_sql)"
+  $_hdbsql -U $(echo $_hdbuser) "$(echo $_sql)" >> $(echo $_logfile)
+  if test $? -eq 0
+  then
+    echo "El backup finalizo correctamente." >> $(echo $_logfile)
+  else
+    echo "El backup no finalizo correctamente." >> $(echo $_logfile)
+  fi
+}
+
+
+
+function housekeeping(){
+  local _db=$1
+  local _dbdir=$2
+  logSection "eliminar certificados viejos del último cambio"
+  #ls -t1 $(echo $_bkpdir)/$(echo $_dbdir)/$(echo $_db)@$(echo $SAPSYSTEMNAME)_$(echo $_bkpprefix)* | tee -a $(echo $_logfile) | xargs rm > /dev/null
+}
+
+
+function cert_renew(){
+  local _db=$1
+  local _dbdir=$2
+  logSection "eliminar certificados viejos del último cambio"
+
+#poner todo con parametros
+sapgenpse import_p12 -x xxxx -z xxxx -p /usr/sap/WI1/W40/sec/SAPSSL_wildcar.pse /tmp/tmb.cat_full.pfx
+
+sapgenpse import_p12 -x xxxx -z xxxxx -p /usr/sap/WI1/W40/sec/SAPSSL_CA.pse /tmp/tmb.cat_full.pfx
+
+}
+
+
+#########################################################################################
+#  Main                                                                                 #
+#########################################################################################
+
+[ -d $(echo $_logdir) ] || mkdir -p $(echo $_logdir)
+echo "" > $(echo $_logfile)
+
+for _db in $_dblist; do
+  logSection "Realizar cambio de certificados:   $(echo $_db)"
+  if [[ ${SAPSYSTEMNAME:(-1)} == $_sidpro ]]
+  then
+    _dbdir=$_db; if [ $_db != "SYSTEMDB" ]; then _dbdir="DB_$(echo $_db)"; fi
+    housekeeping $_db $_dbdir
+    backup $_db $_dbdir
+    cert_renew $_db
+  fi
+done
